@@ -54,8 +54,8 @@ client.on('message_create', async (message) => {
     const media = await message.downloadMedia();
 
     // Only handle PDFs
-    if (media.mimetype !== 'application/pdf') return;
-
+console.log('Media received, mimetype:', media.mimetype);
+if (!media.mimetype.includes('pdf')) return;
     console.log('📄 ECG PDF received — analyzing...');
 
     try {
