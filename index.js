@@ -46,7 +46,7 @@ client.on('ready', () => {
     console.log('✅ Bot connected and watching the group!');
 });
 
-client.on('message_create', async (message) => {
+client.on('message', async (message) => {
     const chat = await message.getChat();
     if (!chat.isGroup || chat.name !== TARGET_GROUP) return;
     if (!message.hasMedia) return;
