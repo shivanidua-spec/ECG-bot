@@ -24,8 +24,17 @@ http.createServer(async (req, res) => {
     }
 }).listen(process.env.PORT || 3000);
 
-const client = new Client({ authStrategy: new LocalAuth() });
-
+const client = new Client({
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ]
+    }
+});
 client.on('qr', qr => {
     lastQR = qr;
     console.log('QR ready — open the app URL in your browser to scan');
