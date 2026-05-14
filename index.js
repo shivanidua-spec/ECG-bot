@@ -42,6 +42,9 @@ client.on('qr', qr => {
 });
 
 client.on('ready', () => {
+    client.on('message', async (message) => {
+    console.log('ANY message received from:', message.from, '| type:', message.type, '| hasMedia:', message.hasMedia);
+});
     lastQR = null;
     console.log('✅ Bot connected and watching the group!');
 });
