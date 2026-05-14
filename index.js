@@ -8,7 +8,6 @@ const TARGET_GROUP = process.env.GROUP_NAME;
 
 let lastQR = null;
 
-// Simple web server to show QR code in browser
 http.createServer(async (req, res) => {
     if (lastQR) {
         const imgData = await qrcode.toDataURL(lastQR);
@@ -20,14 +19,14 @@ http.createServer(async (req, res) => {
         </body></html>`);
     } else {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<h2>✅ WhatsApp already connected! No QR needed.</h2>');
+        res.end('<h2>✅ WhatsApp already connected!</h2>');
     }
 }).listen(process.env.PORT || 3000);
 
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-executablePath: '/usr/bin/chromium',
+        executablePath: '/usr/bin/chromium',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -36,6 +35,7 @@ executablePath: '/usr/bin/chromium',
         ]
     }
 });
+
 client.on('qr', qr => {
     lastQR = qr;
     console.log('QR ready — open the app URL in your browser to scan');
@@ -52,28 +52,40 @@ client.on('message_create', async (message) => {
     if (!message.hasMedia) return;
 
     const media = await message.downloadMedia();
-    if (!media.mimetype.startsWith('image/')) return;
 
-    console.log('📷 ECG image received — analyzing...');
+    // Only handle PDFs
+    if (media.mimetype !== 'application/pdf') return;
+
+    console.log('📄 ECG PDF received — analyzing...');
 
     try {
         const response = await anthropic.messages.create({
             model: 'claude-opus-4-5',
-            max_tokens: 10,
+            max_tokens: 300,
             messages: [{
                 role: 'user',
                 content: [
                     {
-                        type: 'image',
+                        type: 'document',
                         source: {
                             type: 'base64',
-                            media_type: media.mimetype,
+                            media_type: 'application/pdf',
                             data: media.data
                         }
                     },
                     {
                         type: 'text',
-                        text: 'This is an ECG graph. Is the recording good quality and complete enough to read? Reply with only one word: "Correct" if good quality, or "Repeat" if it needs to be retaken.'
+                        text: `You are an ECG quality checker. Analyze this ECG recording for technical quality only (not clinical diagnosis).
+
+If the ECG is good quality and readable, reply with exactly:
+Correct
+
+If the ECG has quality issues, reply with exactly:
+Repeat
+Issues found: [list the specific problems, e.g. lead detachment, poor contact, muscle noise, baseline wander, missing leads]
+Action needed: [specific instructions for the technician, e.g. "Re-apply gel on chest leads V1-V4", "Ask patient to relax and breathe normally", "Check and re-attach lead aVL", "Clean skin before reapplying electrodes"]
+
+Be concise and practical. Only mention what needs to be fixed.`
                     }
                 ]
             }]
