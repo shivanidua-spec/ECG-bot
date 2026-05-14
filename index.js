@@ -27,7 +27,7 @@ http.createServer(async (req, res) => {
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-                executablePath: '/run/current-system/sw/bin/chromium',
+executablePath: '/usr/bin/chromium',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
