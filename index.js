@@ -8,6 +8,7 @@ const pino = require('pino');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const TARGET_GROUP = process.env.GROUP_NAME;
 let lastQR = null;
+let sock = null;
 
 http.createServer(async (req, res) => {
     if (lastQR) {
@@ -24,13 +25,30 @@ http.createServer(async (req, res) => {
     }
 }).listen(process.env.PORT || 3000);
 
+async function sendWithRetry(jid, text, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            await sock.sendMessage(jid, { text });
+            console.log('✅ Message sent successfully!');
+            return;
+        } catch (err) {
+            console.log(`Send attempt ${i + 1} failed:`, err.message);
+            if (i < retries - 1) await new Promise(r => setTimeout(r, 3000));
+        }
+    }
+    console.error('All send attempts failed');
+}
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('/app/auth');
 
-    const sock = makeWASocket({
+    sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false
+        printQRInTerminal: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -48,7 +66,7 @@ async function startBot() {
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code !== DisconnectReason.loggedOut) {
                 console.log('Reconnecting...');
-                startBot();
+                setTimeout(startBot, 5000);
             } else {
                 console.log('Logged out. Please scan QR again.');
             }
@@ -66,7 +84,6 @@ async function startBot() {
 
                 const groupMeta = await sock.groupMetadata(jid);
                 console.log('Message from group:', groupMeta.subject);
-
                 if (groupMeta.subject !== TARGET_GROUP) continue;
 
                 const docMsg = msg.message?.documentMessage ||
@@ -116,8 +133,12 @@ Be brief and practical.`
                 });
 
                 const reply = response.content[0].text.trim();
-                console.log('✅ Replied:', reply);
-await sock.sendMessage(jid, { text: reply }, { timeout: 60000 });
+                console.log('Claude reply:', reply);
+
+                // Wait 2 seconds before sending to ensure connection is stable
+                await new Promise(r => setTimeout(r, 2000));
+                await sendWithRetry(jid, reply);
+
             } catch (err) {
                 console.error('Error:', err.message);
             }
