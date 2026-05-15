@@ -91,8 +91,10 @@ async function startBot() {
 
                 if (!docMsg) continue;
                 if (!docMsg.mimetype?.includes('pdf')) continue;
-
-                console.log('📄 ECG PDF received — analyzing...');
+console.log('📄 ECG PDF received — analyzing...');
+                
+                // Send immediate acknowledgment to keep connection alive
+                await sock.sendMessage(jid, { text: '⏳ Checking ECG quality...' });
 
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
                     reuploadRequest: sock.updateMediaMessage
@@ -134,16 +136,5 @@ Be brief and practical.`
 
                 const reply = response.content[0].text.trim();
                 console.log('Claude reply:', reply);
-
-                // Wait 2 seconds before sending to ensure connection is stable
-                await new Promise(r => setTimeout(r, 2000));
-                await sendWithRetry(jid, reply);
-
-            } catch (err) {
-                console.error('Error:', err.message);
-            }
-        }
-    });
-}
-
-startBot();
+                await sock.sendMessage(jid, { text: reply });
+                console.log('✅ Final reply sent!');
