@@ -117,7 +117,7 @@ Be brief and practical.`
 
                 const reply = response.content[0].text.trim();
                 console.log('✅ Replied:', reply);
-await sock.sendMessage(jid, { text: reply });
+await sock.sendMessage(jid, { text: reply }, { timeout: 60000 });
             } catch (err) {
                 console.error('Error:', err.message);
             }
