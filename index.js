@@ -23,7 +23,7 @@ http.createServer(async (req, res) => {
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('/app/auth');
-    
+
     sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
@@ -67,14 +67,8 @@ async function startBot() {
                 if (!docMsg) continue;
                 if (!docMsg.mimetype?.includes('pdf')) continue;
 
-console.log('📄 ECG PDF received — attempting to send acknowledgment...');
-                try {
-                    await sock.sendMessage(jid, { text: '⏳ Checking ECG quality...' });
-                    console.log('✅ Acknowledgment sent!');
-                } catch (sendErr) {
-                    console.error('❌ Acknowledgment send failed:', sendErr.message, sendErr.stack);
-                }
-                console.log('Now analyzing PDF...');
+                console.log('📄 ECG PDF received — analyzing...');
+
                 const buffer = await downloadMediaMessage(
                     msg, 'buffer', {},
                     { reuploadRequest: sock.updateMediaMessage }
@@ -114,8 +108,12 @@ Be brief and practical.`
 
                 const reply = response.content[0].text.trim();
                 console.log('Analysis done:', reply);
-                await sock.sendMessage(jid, { text: reply });
-                console.log('✅ Final reply sent!');
+
+                await Promise.race([
+                    sock.sendMessage(jid, { text: reply }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 15000))
+                ]);
+                console.log('✅ Reply sent!');
 
             } catch (err) {
                 console.error('Error:', err.message);
