@@ -117,8 +117,7 @@ Be brief and practical.`
 
                 const reply = response.content[0].text.trim();
                 console.log('✅ Replied:', reply);
-                await sock.sendMessage(jid, { text: reply }, { quoted: msg });
-
+await sock.sendMessage(jid, { text: reply });
             } catch (err) {
                 console.error('Error:', err.message);
             }
