@@ -1,4 +1,5 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const makeWASocket = require('@whiskeysockets/baileys').default;
+const { useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const Anthropic = require('@anthropic-ai/sdk');
 const http = require('http');
 const qrcode = require('qrcode');
@@ -6,10 +7,8 @@ const pino = require('pino');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const TARGET_GROUP = process.env.GROUP_NAME;
-
 let lastQR = null;
 
-// Simple web server to show QR
 http.createServer(async (req, res) => {
     if (lastQR) {
         const imgData = await qrcode.toDataURL(lastQR);
@@ -17,7 +16,7 @@ http.createServer(async (req, res) => {
         res.end(`<html><body style="text-align:center;font-family:sans-serif">
             <h2>Scan with WhatsApp</h2>
             <img src="${imgData}" />
-            <p>Refresh page if QR expired</p>
+            <p>Refresh if expired</p>
         </body></html>`);
     } else {
         res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -26,7 +25,7 @@ http.createServer(async (req, res) => {
 }).listen(process.env.PORT || 3000);
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth');
+    const { state, saveCreds } = await useMultiFileAuthState('/app/auth');
 
     const sock = makeWASocket({
         auth: state,
@@ -36,53 +35,51 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
             lastQR = qr;
-            console.log('QR ready — open the app URL in your browser to scan');
+            console.log('QR ready — open the app URL to scan');
         }
         if (connection === 'open') {
             lastQR = null;
-            console.log('✅ Bot connected and watching the group!');
+            console.log('✅ Bot connected!');
         }
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting:', shouldReconnect);
-            if (shouldReconnect) startBot();
+            const code = lastDisconnect?.error?.output?.statusCode;
+            if (code !== DisconnectReason.loggedOut) {
+                console.log('Reconnecting...');
+                startBot();
+            } else {
+                console.log('Logged out. Please scan QR again.');
+            }
         }
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
 
-        for (const message of messages) {
+        for (const msg of messages) {
             try {
-                // Skip if no message or if it's from me
-                if (!message.message || message.key.fromMe) return;
-
-                // Get group name
-                const jid = message.key.remoteJid;
-                if (!jid.endsWith('@g.us')) return; // only groups
+                if (msg.key.fromMe) continue;
+                const jid = msg.key.remoteJid;
+                if (!jid.endsWith('@g.us')) continue;
 
                 const groupMeta = await sock.groupMetadata(jid);
-                const groupName = groupMeta.subject;
+                console.log('Message from group:', groupMeta.subject);
 
-                console.log('Message from group:', groupName, '| target:', TARGET_GROUP);
+                if (groupMeta.subject !== TARGET_GROUP) continue;
 
-                if (groupName !== TARGET_GROUP) return;
+                const docMsg = msg.message?.documentMessage ||
+                               msg.message?.documentWithCaptionMessage?.message?.documentMessage;
 
-                // Check for PDF
-                const msg = message.message;
-                const docMsg = msg.documentMessage || msg.documentWithCaptionMessage?.message?.documentMessage;
-
-                if (!docMsg) return;
-                if (!docMsg.mimetype?.includes('pdf')) return;
+                if (!docMsg) continue;
+                if (!docMsg.mimetype?.includes('pdf')) continue;
 
                 console.log('📄 ECG PDF received — analyzing...');
 
-                // Download the PDF
-                const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-                const buffer = await downloadMediaMessage(message, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
+                const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                    reuploadRequest: sock.updateMediaMessage
+                });
 
                 const base64Data = buffer.toString('base64');
 
@@ -102,17 +99,17 @@ async function startBot() {
                             },
                             {
                                 type: 'text',
-                                text: `You are an ECG quality checker. Analyze this ECG recording for technical quality only (not clinical diagnosis).
+                                text: `You are an ECG quality checker. Analyze this ECG for technical quality only.
 
-If the ECG is good quality and readable, reply with exactly:
+If good quality, reply exactly:
 Correct
 
-If the ECG has quality issues, reply with exactly:
+If poor quality, reply exactly:
 Repeat
-Issues found: [list the specific problems, e.g. lead detachment, poor contact, muscle noise, baseline wander, missing leads]
-Action needed: [specific instructions for the technician, e.g. "Re-apply gel on chest leads V1-V4", "Ask patient to relax and breathe normally", "Check and re-attach lead aVL", "Clean skin before reapplying electrodes"]
+Issues: [list problems e.g. lead detachment, muscle noise, baseline wander]
+Fix: [specific instructions e.g. "Re-apply gel on V1-V4", "Ask patient to lie still", "Re-attach left arm lead", "Clean skin and reapply electrodes"]
 
-Be concise and practical. Only mention what needs to be fixed.`
+Be brief and practical.`
                             }
                         ]
                     }]
@@ -120,8 +117,13 @@ Be concise and practical. Only mention what needs to be fixed.`
 
                 const reply = response.content[0].text.trim();
                 console.log('✅ Replied:', reply);
-
-                await sock.sendMessage(jid, { text: reply }, { quoted: message });
+                await sock.sendMessage(jid, { text: reply }, { quoted: msg });
 
             } catch (err) {
-                console.error('Err
+                console.error('Error:', err.message);
+            }
+        }
+    });
+}
+
+startBot();
