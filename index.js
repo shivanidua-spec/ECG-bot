@@ -23,23 +23,33 @@ http.createServer(async (req, res) => {
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('/app/auth');
+    
     sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000
+        connectTimeoutMs: 120000,
+        defaultQueryTimeoutMs: undefined,
+        keepAliveIntervalMs: 5000
     });
+
     sock.ev.on('creds.update', saveCreds);
+
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) { lastQR = qr; console.log('QR ready'); }
         if (connection === 'open') { lastQR = null; console.log('✅ Bot connected!'); }
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
-            if (code !== DisconnectReason.loggedOut) { setTimeout(startBot, 5000); }
+            console.log('Connection closed, code:', code);
+            if (code !== DisconnectReason.loggedOut) {
+                console.log('Reconnecting in 5 seconds...');
+                setTimeout(startBot, 5000);
+            } else {
+                console.log('Logged out — please scan QR again');
+            }
         }
     });
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         for (const msg of messages) {
@@ -47,32 +57,62 @@ async function startBot() {
                 if (msg.key.fromMe) continue;
                 const jid = msg.key.remoteJid;
                 if (!jid.endsWith('@g.us')) continue;
+
                 const groupMeta = await sock.groupMetadata(jid);
                 console.log('Message from group:', groupMeta.subject);
                 if (groupMeta.subject !== TARGET_GROUP) continue;
+
                 const docMsg = msg.message?.documentMessage ||
                                msg.message?.documentWithCaptionMessage?.message?.documentMessage;
                 if (!docMsg) continue;
                 if (!docMsg.mimetype?.includes('pdf')) continue;
-                console.log('📄 ECG PDF received — analyzing...');
+
+                console.log('📄 ECG PDF received — sending acknowledgment...');
                 await sock.sendMessage(jid, { text: '⏳ Checking ECG quality...' });
-                const buffer = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
-                const base64Data = buffer.toString('base64');
+                console.log('Acknowledgment sent — now analyzing...');
+
+                const buffer = await downloadMediaMessage(
+                    msg, 'buffer', {},
+                    { reuploadRequest: sock.updateMediaMessage }
+                );
+
                 const response = await anthropic.messages.create({
                     model: 'claude-opus-4-5',
                     max_tokens: 300,
                     messages: [{
                         role: 'user',
                         content: [
-                            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Data } },
-                            { type: 'text', text: `You are an ECG quality checker. Analyze this ECG for technical quality only.\n\nIf good quality, reply exactly:\nCorrect\n\nIf poor quality, reply exactly:\nRepeat\nIssues: [list problems e.g. lead detachment, muscle noise, baseline wander]\nFix: [specific instructions e.g. "Re-apply gel on V1-V4", "Ask patient to lie still", "Re-attach left arm lead"]\n\nBe brief and practical.` }
+                            {
+                                type: 'document',
+                                source: {
+                                    type: 'base64',
+                                    media_type: 'application/pdf',
+                                    data: buffer.toString('base64')
+                                }
+                            },
+                            {
+                                type: 'text',
+                                text: `You are an ECG quality checker. Analyze this ECG for technical quality only.
+
+If good quality, reply exactly:
+Correct
+
+If poor quality, reply exactly:
+Repeat
+Issues: [list problems e.g. lead detachment, muscle noise, baseline wander]
+Fix: [specific instructions e.g. "Re-apply gel on V1-V4", "Ask patient to lie still", "Re-attach left arm lead"]
+
+Be brief and practical.`
+                            }
                         ]
                     }]
                 });
+
                 const reply = response.content[0].text.trim();
-                console.log('Claude reply:', reply);
+                console.log('Analysis done:', reply);
                 await sock.sendMessage(jid, { text: reply });
-                console.log('✅ Reply sent!');
+                console.log('✅ Final reply sent!');
+
             } catch (err) {
                 console.error('Error:', err.message);
             }
