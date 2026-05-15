@@ -67,10 +67,14 @@ async function startBot() {
                 if (!docMsg) continue;
                 if (!docMsg.mimetype?.includes('pdf')) continue;
 
-                console.log('📄 ECG PDF received — sending acknowledgment...');
-                await sock.sendMessage(jid, { text: '⏳ Checking ECG quality...' });
-                console.log('Acknowledgment sent — now analyzing...');
-
+console.log('📄 ECG PDF received — attempting to send acknowledgment...');
+                try {
+                    await sock.sendMessage(jid, { text: '⏳ Checking ECG quality...' });
+                    console.log('✅ Acknowledgment sent!');
+                } catch (sendErr) {
+                    console.error('❌ Acknowledgment send failed:', sendErr.message, sendErr.stack);
+                }
+                console.log('Now analyzing PDF...');
                 const buffer = await downloadMediaMessage(
                     msg, 'buffer', {},
                     { reuploadRequest: sock.updateMediaMessage }
